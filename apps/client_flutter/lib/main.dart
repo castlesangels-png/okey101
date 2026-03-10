@@ -18,13 +18,39 @@ class Okey101App extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
         useMaterial3: true,
       ),
-      home: const LoginPage(),
+      home: const AuthPage(),
     );
   }
 }
 
+class AuthPage extends StatefulWidget {
+  const AuthPage({super.key});
+
+  @override
+  State<AuthPage> createState() => _AuthPageState();
+}
+
+class _AuthPageState extends State<AuthPage> {
+  bool isLoginMode = true;
+
+  void toggleMode() {
+    setState(() {
+      isLoginMode = !isLoginMode;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return isLoginMode
+        ? LoginPage(onSwitchMode: toggleMode)
+        : RegisterPage(onSwitchMode: toggleMode);
+  }
+}
+
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  final VoidCallback onSwitchMode;
+
+  const LoginPage({super.key, required this.onSwitchMode});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -48,7 +74,7 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://localhost:8080/auth/login'),
+        Uri.parse('http://127.0.0.1:8080/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'identifier': identifierController.text.trim(),
@@ -93,7 +119,7 @@ class _LoginPageState extends State<LoginPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Okey101 Login'),
+        title: const Text('Okey101 Giriþ'),
         centerTitle: true,
       ),
       body: Center(
@@ -107,7 +133,7 @@ class _LoginPageState extends State<LoginPage> {
                 TextField(
                   controller: identifierController,
                   decoration: const InputDecoration(
-                    labelText: 'Username veya Email',
+                    labelText: 'Kullanýcý adý veya e-posta',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -135,13 +161,18 @@ class _LoginPageState extends State<LoginPage> {
                         : const Text('Giriþ Yap'),
                   ),
                 ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: widget.onSwitchMode,
+                  child: const Text('Hesabýn yok mu? Kayýt ol'),
+                ),
                 const SizedBox(height: 20),
                 if (errorText != null)
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.1),
+                      color: Colors.red.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
@@ -155,7 +186,7 @@ class _LoginPageState extends State<LoginPage> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.green.withValues(alpha: 0.1),
+                      color: Colors.green.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Column(
@@ -170,9 +201,9 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         const SizedBox(height: 10),
                         Text('ID: ${user['id']}'),
-                        Text('Username: ${user['username']}'),
-                        Text('Email: ${user['email']}'),
-                        Text('Display Name: ${user['display_name']}'),
+                        Text('Kullanýcý adý: ${user['username']}'),
+                        Text('E-posta: ${user['email']}'),
+                        Text('Görünen ad: ${user['display_name']}'),
                         Text('Bakiye: ${user['balance']}'),
                         Text('Gold: ${user['is_gold']}'),
                         Text('Admin: ${user['is_admin']}'),
@@ -181,6 +212,182 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                 ],
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class RegisterPage extends StatefulWidget {
+  final VoidCallback onSwitchMode;
+
+  const RegisterPage({super.key, required this.onSwitchMode});
+
+  @override
+  State<RegisterPage> createState() => _RegisterPageState();
+}
+
+class _RegisterPageState extends State<RegisterPage> {
+  final usernameController = TextEditingController();
+  final emailController = TextEditingController();
+  final displayNameController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  bool isLoading = false;
+  String? errorText;
+  String? successText;
+
+  Future<void> register() async {
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      isLoading = true;
+      errorText = null;
+      successText = null;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('http://127.0.0.1:8080/auth/register'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': usernameController.text.trim(),
+          'email': emailController.text.trim(),
+          'password': passwordController.text,
+          'display_name': displayNameController.text.trim(),
+        }),
+      );
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
+
+      if (response.statusCode == 201) {
+        setState(() {
+          successText = 'Kayýt baþarýlý. Þimdi giriþ yapabilirsin.';
+        });
+      } else {
+        setState(() {
+          errorText = data['message']?.toString() ?? 'Kayýt baþarýsýz';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        errorText = 'Baðlantý hatasý: $e';
+      });
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    usernameController.dispose();
+    emailController.dispose();
+    displayNameController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Okey101 Kayýt'),
+        centerTitle: true,
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  TextField(
+                    controller: usernameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Kullanýcý adý',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: emailController,
+                    decoration: const InputDecoration(
+                      labelText: 'E-posta',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: displayNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Görünen ad',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Þifre',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton(
+                      onPressed: isLoading ? null : register,
+                      child: isLoading
+                          ? const SizedBox(
+                              height: 22,
+                              width: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Kayýt Ol'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: widget.onSwitchMode,
+                    child: const Text('Zaten hesabýn var mý? Giriþ yap'),
+                  ),
+                  const SizedBox(height: 20),
+                  if (errorText != null)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        errorText!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  if (successText != null)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        successText!,
+                        style: const TextStyle(color: Colors.green),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
