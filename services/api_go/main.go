@@ -21,6 +21,24 @@ type RegisterRequest struct {
 	DisplayName string `json:"display_name"`
 }
 
+type LoginRequest struct {
+	Identifier string `json:"identifier"`
+	Password   string `json:"password"`
+}
+
+type UserWithAuth struct {
+	ID           int64
+	Username     string
+	Email        string
+	DisplayName  string
+	PasswordHash string
+	IsGold       bool
+	IsAdmin      bool
+	IsBot        bool
+	Status       string
+	Balance      int64
+}
+
 func main() {
 	_ = godotenv.Load()
 
@@ -211,6 +229,113 @@ func main() {
 				"email":        req.Email,
 				"display_name": req.DisplayName,
 				"balance":      startingBalance,
+			},
+		})
+	})
+
+	router.POST("/auth/login", func(c *gin.Context) {
+		var req LoginRequest
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "invalid request body",
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		req.Identifier = strings.TrimSpace(strings.ToLower(req.Identifier))
+
+		if req.Identifier == "" || req.Password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "identifier and password are required",
+			})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		conn, err := pgx.Connect(ctx, connString)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "database connection failed",
+				"error":   err.Error(),
+			})
+			return
+		}
+		defer conn.Close(ctx)
+
+		var user UserWithAuth
+		err = conn.QueryRow(ctx, `
+            SELECT
+                u.id,
+                u.username,
+                u.email,
+                u.display_name,
+                u.password_hash,
+                u.is_gold,
+                u.is_admin,
+                u.is_bot,
+                u.status,
+                COALESCE(w.balance, 0)
+            FROM users u
+            LEFT JOIN chip_wallets w ON w.user_id = u.id
+            WHERE u.username = $1 OR u.email = $1
+            LIMIT 1
+        `, req.Identifier).Scan(
+			&user.ID,
+			&user.Username,
+			&user.Email,
+			&user.DisplayName,
+			&user.PasswordHash,
+			&user.IsGold,
+			&user.IsAdmin,
+			&user.IsBot,
+			&user.Status,
+			&user.Balance,
+		)
+
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  "error",
+				"message": "invalid credentials",
+			})
+			return
+		}
+
+		if user.Status != "active" {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "user is not active",
+			})
+			return
+		}
+
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  "error",
+				"message": "invalid credentials",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"message": "login successful",
+			"user": gin.H{
+				"id":           user.ID,
+				"username":     user.Username,
+				"email":        user.Email,
+				"display_name": user.DisplayName,
+				"is_gold":      user.IsGold,
+				"is_admin":     user.IsAdmin,
+				"is_bot":       user.IsBot,
+				"status":       user.Status,
+				"balance":      user.Balance,
 			},
 		})
 	})
