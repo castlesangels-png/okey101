@@ -76,6 +76,7 @@ class _LobbyPageState extends State<LobbyPage> {
           builder: (_) => TableRoomPage(
             tableId: table.id,
             tableName: table.name,
+            viewerUserId: widget.userId,
           ),
         ),
       );

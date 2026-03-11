@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
     "database/sql"
@@ -11,6 +11,7 @@ import (
     _ "github.com/lib/pq"
     "golang.org/x/crypto/bcrypt"
 
+    "okey101/services/api_go/internal/game101"
     "okey101/services/api_go/internal/handlers"
 )
 
@@ -47,6 +48,8 @@ func main() {
     }
 
     tableHandler := handlers.NewTableHandler(db)
+    gameService := game101.NewService(db)
+    gameHandler := handlers.NewGameHandler(gameService)
 
     mux := http.NewServeMux()
 
@@ -138,12 +141,10 @@ func main() {
             http.NotFound(w, r)
             return
         }
-
         if r.Method != http.MethodGet {
             http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
             return
         }
-
         tableHandler.ListTables(w, r)
     })
 
@@ -152,21 +153,37 @@ func main() {
             tableHandler.JoinTable(w, r)
             return
         }
-
         if r.Method != http.MethodGet {
             http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
             return
         }
-
         tableHandler.GetTable(w, r)
+    })
+
+    mux.HandleFunc("/games/start", func(w http.ResponseWriter, r *http.Request) {
+        gameHandler.StartGame(w, r)
+    })
+
+    mux.HandleFunc("/games/", func(w http.ResponseWriter, r *http.Request) {
+        switch {
+        case strings.HasSuffix(r.URL.Path, "/draw"):
+            gameHandler.DrawTile(w, r)
+            return
+        case strings.HasSuffix(r.URL.Path, "/discard"):
+            gameHandler.DiscardTile(w, r)
+            return
+        case strings.HasSuffix(r.URL.Path, "/open"):
+            gameHandler.OpenHand(w, r)
+            return
+        case strings.HasSuffix(r.URL.Path, "/bot-turns"):
+            gameHandler.RunBotTurns(w, r)
+            return
+        default:
+            gameHandler.GetGame(w, r)
+            return
+        }
     })
 
     log.Println("api listening on :8080")
     log.Fatal(http.ListenAndServe(":8080", mux))
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(status)
-    _ = json.NewEncoder(w).Encode(payload)
 }
