@@ -39,6 +39,17 @@ type UserWithAuth struct {
 	Balance      int64
 }
 
+type TableItem struct {
+	ID             int64  `json:"id"`
+	TableName      string `json:"table_name"`
+	GameType       string `json:"game_type"`
+	ModeType       string `json:"mode_type"`
+	StakeAmount    int64  `json:"stake_amount"`
+	MaxPlayers     int    `json:"max_players"`
+	CurrentPlayers int    `json:"current_players"`
+	Status         string `json:"status"`
+}
+
 func main() {
 	_ = godotenv.Load()
 
@@ -337,6 +348,66 @@ func main() {
 				"status":       user.Status,
 				"balance":      user.Balance,
 			},
+		})
+	})
+
+	router.GET("/tables", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		conn, err := pgx.Connect(ctx, connString)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "database connection failed",
+				"error":   err.Error(),
+			})
+			return
+		}
+		defer conn.Close(ctx)
+
+		rows, err := conn.Query(ctx, `
+            SELECT id, table_name, game_type, mode_type, stake_amount, max_players, current_players, status
+            FROM game_tables
+            ORDER BY stake_amount ASC, id ASC
+        `)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "failed to fetch tables",
+				"error":   err.Error(),
+			})
+			return
+		}
+		defer rows.Close()
+
+		tables := make([]TableItem, 0)
+
+		for rows.Next() {
+			var item TableItem
+			if err := rows.Scan(
+				&item.ID,
+				&item.TableName,
+				&item.GameType,
+				&item.ModeType,
+				&item.StakeAmount,
+				&item.MaxPlayers,
+				&item.CurrentPlayers,
+				&item.Status,
+			); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status":  "error",
+					"message": "failed to parse table row",
+					"error":   err.Error(),
+				})
+				return
+			}
+			tables = append(tables, item)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ok",
+			"tables": tables,
 		})
 	})
 
