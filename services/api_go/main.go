@@ -1,423 +1,172 @@
-package main
+﻿package main
 
 import (
-	"context"
-	"fmt"
-	"net/http"
-	"os"
-	"strings"
-	"time"
+    "database/sql"
+    "encoding/json"
+    "log"
+    "net/http"
+    "os"
+    "strings"
 
-	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/joho/godotenv"
-	"golang.org/x/crypto/bcrypt"
+    _ "github.com/lib/pq"
+    "golang.org/x/crypto/bcrypt"
+
+    "okey101/services/api_go/internal/handlers"
 )
 
-type RegisterRequest struct {
-	Username    string `json:"username"`
-	Email       string `json:"email"`
-	Password    string `json:"password"`
-	DisplayName string `json:"display_name"`
-}
-
 type LoginRequest struct {
-	Identifier string `json:"identifier"`
-	Password   string `json:"password"`
+    Identifier string `json:"identifier"`
+    Email      string `json:"email"`
+    Username   string `json:"username"`
+    Password   string `json:"password"`
 }
 
-type UserWithAuth struct {
-	ID           int64
-	Username     string
-	Email        string
-	DisplayName  string
-	PasswordHash string
-	IsGold       bool
-	IsAdmin      bool
-	IsBot        bool
-	Status       string
-	Balance      int64
-}
-
-type TableItem struct {
-	ID             int64  `json:"id"`
-	TableName      string `json:"table_name"`
-	GameType       string `json:"game_type"`
-	ModeType       string `json:"mode_type"`
-	StakeAmount    int64  `json:"stake_amount"`
-	MaxPlayers     int    `json:"max_players"`
-	CurrentPlayers int    `json:"current_players"`
-	Status         string `json:"status"`
+type LoginResponse struct {
+    ID          int64                  `json:"id"`
+    UserID      int64                  `json:"user_id"`
+    Username    string                 `json:"username"`
+    Email       string                 `json:"email"`
+    DisplayName string                 `json:"display_name"`
+    User        map[string]interface{} `json:"user"`
 }
 
 func main() {
-	_ = godotenv.Load()
+    dsn := os.Getenv("DATABASE_URL")
+    if dsn == "" {
+        dsn = "postgres://postgres:postgres123@localhost:5432/okey101?sslmode=disable"
+    }
 
-	appPort := getEnv("APP_PORT", "8080")
-	dbHost := getEnv("POSTGRES_HOST", "localhost")
-	dbPort := getEnv("POSTGRES_PORT", "5432")
-	dbName := getEnv("POSTGRES_DB", "okey101")
-	dbUser := getEnv("POSTGRES_USER", "postgres")
-	dbPassword := getEnv("POSTGRES_PASSWORD", "postgres123")
+    db, err := sql.Open("postgres", dsn)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
 
-	connString := fmt.Sprintf(
-		"host=%s port=%s dbname=%s user=%s password=%s sslmode=disable",
-		dbHost, dbPort, dbName, dbUser, dbPassword,
-	)
+    if err := db.Ping(); err != nil {
+        log.Fatal(err)
+    }
 
-	router := gin.Default()
+    tableHandler := handlers.NewTableHandler(db)
 
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "ok",
-			"service": "api_go",
-			"time":    time.Now().Format(time.RFC3339),
-		})
-	})
+    mux := http.NewServeMux()
 
-	router.GET("/health/db", func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+    mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+        writeJSON(w, http.StatusOK, map[string]interface{}{
+            "status": "ok",
+        })
+    })
 
-		conn, err := pgx.Connect(ctx, connString)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "database connection failed",
-				"error":   err.Error(),
-			})
-			return
-		}
-		defer conn.Close(ctx)
+    mux.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+            http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
 
-		var now time.Time
-		err = conn.QueryRow(ctx, "SELECT NOW()").Scan(&now)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "database query failed",
-				"error":   err.Error(),
-			})
-			return
-		}
+        var req LoginRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+            http.Error(w, "invalid body", http.StatusBadRequest)
+            return
+        }
 
-		c.JSON(http.StatusOK, gin.H{
-			"status":   "ok",
-			"service":  "api_go",
-			"database": "connected",
-			"db_time":  now.Format(time.RFC3339),
-		})
-	})
+        identifier := strings.TrimSpace(req.Identifier)
+        if identifier == "" {
+            if strings.TrimSpace(req.Email) != "" {
+                identifier = strings.TrimSpace(req.Email)
+            } else {
+                identifier = strings.TrimSpace(req.Username)
+            }
+        }
 
-	router.POST("/auth/register", func(c *gin.Context) {
-		var req RegisterRequest
+        if identifier == "" || strings.TrimSpace(req.Password) == "" {
+            http.Error(w, "identifier and password required", http.StatusBadRequest)
+            return
+        }
 
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  "error",
-				"message": "invalid request body",
-				"error":   err.Error(),
-			})
-			return
-		}
+        var id int64
+        var username string
+        var email string
+        var displayName string
+        var passwordHash string
 
-		req.Username = strings.TrimSpace(strings.ToLower(req.Username))
-		req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-		req.DisplayName = strings.TrimSpace(req.DisplayName)
-
-		if req.Username == "" || req.Email == "" || req.Password == "" || req.DisplayName == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  "error",
-				"message": "username, email, password and display_name are required",
-			})
-			return
-		}
-
-		if len(req.Password) < 6 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  "error",
-				"message": "password must be at least 6 characters",
-			})
-			return
-		}
-
-		passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "failed to hash password",
-				"error":   err.Error(),
-			})
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		conn, err := pgx.Connect(ctx, connString)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "database connection failed",
-				"error":   err.Error(),
-			})
-			return
-		}
-		defer conn.Close(ctx)
-
-		tx, err := conn.Begin(ctx)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "failed to begin transaction",
-				"error":   err.Error(),
-			})
-			return
-		}
-		defer tx.Rollback(ctx)
-
-		var userID int64
-		err = tx.QueryRow(ctx, `
-            INSERT INTO users (username, email, password_hash, display_name)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id
-        `, req.Username, req.Email, string(passwordHash), req.DisplayName).Scan(&userID)
-
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  "error",
-				"message": "failed to create user",
-				"error":   err.Error(),
-			})
-			return
-		}
-
-		startingBalance := int64(10000)
-
-		_, err = tx.Exec(ctx, `
-            INSERT INTO chip_wallets (user_id, balance)
-            VALUES ($1, $2)
-        `, userID, startingBalance)
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "failed to create wallet",
-				"error":   err.Error(),
-			})
-			return
-		}
-
-		_, err = tx.Exec(ctx, `
-            INSERT INTO chip_transactions (user_id, tx_type, amount, balance_after, description)
-            VALUES ($1, $2, $3, $4, $5)
-        `, userID, "welcome_bonus", startingBalance, startingBalance, "Initial welcome chips")
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "failed to create initial transaction",
-				"error":   err.Error(),
-			})
-			return
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "failed to commit transaction",
-				"error":   err.Error(),
-			})
-			return
-		}
-
-		c.JSON(http.StatusCreated, gin.H{
-			"status":  "ok",
-			"message": "user registered successfully",
-			"user": gin.H{
-				"id":           userID,
-				"username":     req.Username,
-				"email":        req.Email,
-				"display_name": req.DisplayName,
-				"balance":      startingBalance,
-			},
-		})
-	})
-
-	router.POST("/auth/login", func(c *gin.Context) {
-		var req LoginRequest
-
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  "error",
-				"message": "invalid request body",
-				"error":   err.Error(),
-			})
-			return
-		}
-
-		req.Identifier = strings.TrimSpace(strings.ToLower(req.Identifier))
-
-		if req.Identifier == "" || req.Password == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  "error",
-				"message": "identifier and password are required",
-			})
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		conn, err := pgx.Connect(ctx, connString)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "database connection failed",
-				"error":   err.Error(),
-			})
-			return
-		}
-		defer conn.Close(ctx)
-
-		var user UserWithAuth
-		err = conn.QueryRow(ctx, `
-            SELECT
-                u.id,
-                u.username,
-                u.email,
-                u.display_name,
-                u.password_hash,
-                u.is_gold,
-                u.is_admin,
-                u.is_bot,
-                u.status,
-                COALESCE(w.balance, 0)
-            FROM users u
-            LEFT JOIN chip_wallets w ON w.user_id = u.id
-            WHERE u.username = $1 OR u.email = $1
+        err := db.QueryRow(`
+            SELECT id, username, email, display_name, password_hash
+            FROM users
+            WHERE email = $1 OR username = $1
             LIMIT 1
-        `, req.Identifier).Scan(
-			&user.ID,
-			&user.Username,
-			&user.Email,
-			&user.DisplayName,
-			&user.PasswordHash,
-			&user.IsGold,
-			&user.IsAdmin,
-			&user.IsBot,
-			&user.Status,
-			&user.Balance,
-		)
+        `, identifier).Scan(
+            &id,
+            &username,
+            &email,
+            &displayName,
+            &passwordHash,
+        )
 
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"status":  "error",
-				"message": "invalid credentials",
-			})
-			return
-		}
+        if err == sql.ErrNoRows {
+            http.Error(w, "invalid credentials", http.StatusUnauthorized)
+            return
+        }
+        if err != nil {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+            return
+        }
 
-		if user.Status != "active" {
-			c.JSON(http.StatusForbidden, gin.H{
-				"status":  "error",
-				"message": "user is not active",
-			})
-			return
-		}
+        if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+            http.Error(w, "invalid credentials", http.StatusUnauthorized)
+            return
+        }
 
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"status":  "error",
-				"message": "invalid credentials",
-			})
-			return
-		}
+        resp := LoginResponse{
+            ID:          id,
+            UserID:      id,
+            Username:    username,
+            Email:       email,
+            DisplayName: displayName,
+            User: map[string]interface{}{
+                "id":           id,
+                "user_id":      id,
+                "username":     username,
+                "email":        email,
+                "display_name": displayName,
+            },
+        }
 
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "ok",
-			"message": "login successful",
-			"user": gin.H{
-				"id":           user.ID,
-				"username":     user.Username,
-				"email":        user.Email,
-				"display_name": user.DisplayName,
-				"is_gold":      user.IsGold,
-				"is_admin":     user.IsAdmin,
-				"is_bot":       user.IsBot,
-				"status":       user.Status,
-				"balance":      user.Balance,
-			},
-		})
-	})
+        writeJSON(w, http.StatusOK, resp)
+    })
 
-	router.GET("/tables", func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+    mux.HandleFunc("/tables", func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path != "/tables" {
+            http.NotFound(w, r)
+            return
+        }
 
-		conn, err := pgx.Connect(ctx, connString)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "database connection failed",
-				"error":   err.Error(),
-			})
-			return
-		}
-		defer conn.Close(ctx)
+        if r.Method != http.MethodGet {
+            http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
 
-		rows, err := conn.Query(ctx, `
-            SELECT id, table_name, game_type, mode_type, stake_amount, max_players, current_players, status
-            FROM game_tables
-            ORDER BY stake_amount ASC, id ASC
-        `)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  "error",
-				"message": "failed to fetch tables",
-				"error":   err.Error(),
-			})
-			return
-		}
-		defer rows.Close()
+        tableHandler.ListTables(w, r)
+    })
 
-		tables := make([]TableItem, 0)
+    mux.HandleFunc("/tables/", func(w http.ResponseWriter, r *http.Request) {
+        if strings.HasSuffix(r.URL.Path, "/join") {
+            tableHandler.JoinTable(w, r)
+            return
+        }
 
-		for rows.Next() {
-			var item TableItem
-			if err := rows.Scan(
-				&item.ID,
-				&item.TableName,
-				&item.GameType,
-				&item.ModeType,
-				&item.StakeAmount,
-				&item.MaxPlayers,
-				&item.CurrentPlayers,
-				&item.Status,
-			); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"status":  "error",
-					"message": "failed to parse table row",
-					"error":   err.Error(),
-				})
-				return
-			}
-			tables = append(tables, item)
-		}
+        if r.Method != http.MethodGet {
+            http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
 
-		c.JSON(http.StatusOK, gin.H{
-			"status": "ok",
-			"tables": tables,
-		})
-	})
+        tableHandler.GetTable(w, r)
+    })
 
-	router.Run(":" + appPort)
+    log.Println("api listening on :8080")
+    log.Fatal(http.ListenAndServe(":8080", mux))
 }
 
-func getEnv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	return value
+func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    _ = json.NewEncoder(w).Encode(payload)
 }
