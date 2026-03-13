@@ -4,16 +4,13 @@ class MessageBox extends StatelessWidget {
   final String message;
   final bool isError;
 
-  const MessageBox({
-    super.key,
-    required this.message,
-    required this.isError,
-  });
+  const MessageBox({super.key, required this.message, required this.isError});
 
   @override
   Widget build(BuildContext context) {
-    final bgColor =
-        isError ? Colors.red.withOpacity(0.10) : Colors.green.withOpacity(0.10);
+    final bgColor = isError
+        ? Colors.red.withValues(alpha: 0.10)
+        : Colors.green.withValues(alpha: 0.10);
     final textColor = isError ? Colors.red : Colors.green;
 
     return Container(
@@ -23,10 +20,7 @@ class MessageBox extends StatelessWidget {
         color: bgColor,
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Text(
-        message,
-        style: TextStyle(color: textColor),
-      ),
+      child: Text(message, style: TextStyle(color: textColor)),
     );
   }
 }

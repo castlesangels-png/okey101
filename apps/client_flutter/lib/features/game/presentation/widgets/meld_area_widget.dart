@@ -1,86 +1,90 @@
-import 'package:flutter/material.dart';
-import 'game_tile_widget.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:client_flutter/features/game/domain/rack_arranger.dart';
+import 'package:client_flutter/features/game/presentation/widgets/game_tile_widget.dart';
 
 class MeldAreaWidget extends StatelessWidget {
-  final List<List<Map<String, dynamic>>> groups;
-
   const MeldAreaWidget({
     super.key,
-    required this.groups,
+    required this.melds,
+    this.title = 'Yere Açılanlar',
   });
 
-  Color _parseColor(String raw) {
-    switch (raw) {
-      case 'red':
-        return Colors.red.shade700;
-      case 'blue':
-        return Colors.blue.shade700;
-      case 'black':
-        return Colors.black87;
-      case 'yellow':
-        return Colors.amber.shade800;
-      default:
-        return Colors.black87;
-    }
-  }
+  final List<List<RackTileVm>> melds;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 180,
-      padding: const EdgeInsets.all(14),
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.green.shade700,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.green.shade900, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.10),
-            blurRadius: 14,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        color: const Color(0x1AFFFFFF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0x33FFFFFF),
+          width: 1,
+        ),
       ),
-      child: groups.isEmpty
-          ? const Center(
-              child: Text(
-                'Yere acilan taslar burada gorunecek',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (melds.isEmpty)
+            Container(
+              height: 84,
+              alignment: Alignment.centerLeft,
+              child: const Text(
+                'Henüz açılan taş yok',
                 style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
+                  color: Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             )
-          : SingleChildScrollView(
-              child: Wrap(
-                spacing: 18,
-                runSpacing: 14,
-                children: groups.map((group) {
-                  return Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.green.shade600.withOpacity(0.55),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.18),
-                      ),
+          else
+            Wrap(
+              spacing: 14,
+              runSpacing: 12,
+              children: melds.map((group) {
+                return Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0x14000000),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: const Color(0x22FFFFFF),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: group
-                          .map(
-                            (tile) => GameTileWidget(
-                              value: tile['value'].toString(),
-                              color: _parseColor(tile['color'].toString()),
-                              isJoker: tile['joker'] == true,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: group
+                        .map(
+                          (tile) => Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: GameTileWidget(
+                              tile: tile,
+                              width: 42,
+                              height: 60,
+                              compact: true,
                             ),
-                          )
-                          .toList(),
-                    ),
-                  );
-                }).toList(),
-              ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                );
+              }).toList(),
             ),
+        ],
+      ),
     );
   }
 }

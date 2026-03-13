@@ -1,781 +1,610 @@
-import 'package:flutter/material.dart';
-import '../data/game_api_service.dart';
-import 'widgets/meld_area_widget.dart';
-import 'widgets/player_rack_widget.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:client_flutter/features/game/data/game_api_service.dart';
+import 'package:client_flutter/features/game/domain/game_state_mapper.dart';
+import 'package:client_flutter/features/game/domain/rack_arranger.dart';
+import 'package:client_flutter/features/game/presentation/widgets/discard_drop_zone_widget.dart';
+import 'package:client_flutter/features/game/presentation/widgets/draw_pile_widget.dart';
+import 'package:client_flutter/features/game/presentation/widgets/opponent_badge_widget.dart';
+import 'package:client_flutter/features/game/presentation/widgets/player_rack_widget.dart';
 
 class GameTablePage extends StatefulWidget {
-  final int gameId;
-  final int tableId;
-  final String tableName;
-  final int viewerUserId;
-
   const GameTablePage({
     super.key,
-    required this.gameId,
-    required this.tableId,
-    required this.tableName,
-    required this.viewerUserId,
+    this.gameId,
+    this.tableId,
+    this.tableName,
+    this.token,
+    this.localUsername,
+    this.userId,
+    this.viewerUserId,
   });
+
+  final Object? gameId;
+  final Object? tableId;
+  final Object? tableName;
+  final Object? token;
+  final Object? localUsername;
+  final Object? userId;
+  final Object? viewerUserId;
+
+  String _asText(Object? value) {
+    if (value == null) {
+      return '';
+    }
+    return value.toString().trim();
+  }
+
+  String get resolvedGameId {
+    final g = _asText(gameId);
+    if (g.isNotEmpty) {
+      return g;
+    }
+    return _asText(tableId);
+  }
+
+  String get resolvedTableName => _asText(tableName);
+  String get resolvedViewerUserId => _asText(viewerUserId);
 
   @override
   State<GameTablePage> createState() => _GameTablePageState();
 }
 
 class _GameTablePageState extends State<GameTablePage> {
-  final GameApiService _apiService = GameApiService();
-  late Future<Map<String, dynamic>> _gameFuture;
-  String? _selectedTileId;
-  bool _busy = false;
+  final GameApiService _api = GameApiService();
 
-  String _arrangeMode = 'default';
-  int _groupedTotal = 0;
-  List<Map<String, dynamic>>? _overrideHandForPreview;
+  bool _loading = true;
+  String? _error;
+
+  ParsedGameState? _state;
+  List<RackTileVm> _rackTiles = <RackTileVm>[];
+  Set<int> _gapAfterIndexes = <int>{};
 
   @override
   void initState() {
     super.initState();
-    _gameFuture = _apiService.fetchGame(
-      gameId: widget.gameId,
-      viewerUserId: widget.viewerUserId,
-    );
+    _loadGame();
   }
 
-  Future<void> _refresh() async {
-    final future = _apiService.fetchGame(
-      gameId: widget.gameId,
-      viewerUserId: widget.viewerUserId,
-    );
-    setState(() {
-      _gameFuture = future;
-      _overrideHandForPreview = null;
-      _arrangeMode = 'default';
-      _groupedTotal = 0;
-    });
-    await future;
-  }
-
-  Future<void> _drawTile() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-
-    try {
-      await _apiService.drawTile(
-        gameId: widget.gameId,
-        userId: widget.viewerUserId,
-      );
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _discardTileById(String tileId) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-
-    try {
-      await _apiService.discardTile(
-        gameId: widget.gameId,
-        userId: widget.viewerUserId,
-        tileId: tileId,
-      );
-      _selectedTileId = null;
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _discardSelected() async {
-    if (_selectedTileId == null) return;
-    await _discardTileById(_selectedTileId!);
-  }
-
-  Future<void> _openHand() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-
-    try {
-      await _apiService.openHand(
-        gameId: widget.gameId,
-        userId: widget.viewerUserId,
-      );
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _runBotTurns() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-
-    try {
-      await _apiService.runBotTurns(gameId: widget.gameId);
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  List<Map<String, dynamic>> _hiddenTiles(int count) {
-    return List.generate(
-      count,
-      (_) => {'value': 'x', 'color': 'black'},
-    );
-  }
-
-  List<Map<String, dynamic>> _toTileMaps(List<dynamic> raw) {
-    return raw.map((e) {
-      final m = Map<String, dynamic>.from(e as Map);
-      return <String, dynamic>{
-        'id': m['id']?.toString() ?? '',
-        'value': (m['is_fake_okey'] == true)
-            ? '*'
-            : m['value']?.toString() ?? '',
-        'numeric_value': m['value'] is int
-            ? m['value']
-            : int.tryParse(m['value']?.toString() ?? '') ?? 0,
-        'color': m['color']?.toString() ?? 'black',
-        'joker': m['is_okey'] == true,
-        'fake_okey': m['is_fake_okey'] == true,
-      };
-    }).toList();
-  }
-
-  List<List<Map<String, dynamic>>> _toMeldMaps(List<dynamic> raw) {
-    return raw.map((group) {
-      final list = group as List<dynamic>;
-      return _toTileMaps(list);
-    }).toList();
-  }
-
-  Map<String, dynamic>? _seat(List<dynamic> seats, int seatNo) {
-    for (final s in seats) {
-      final m = Map<String, dynamic>.from(s as Map);
-      if ((m['seat_no'] ?? 0) == seatNo) return m;
-    }
-    return null;
-  }
-
-  String _seatTitle(Map<String, dynamic>? seat, bool isViewer) {
-    if (isViewer) return 'Sen';
-    if (seat == null) return 'Bos Koltuk';
-    return (seat['display_name'] ?? 'Oyuncu').toString();
-  }
-
-  int _colorOrder(String color) {
-    switch (color) {
-      case 'red':
-        return 1;
-      case 'blue':
-        return 2;
-      case 'black':
-        return 3;
-      case 'yellow':
-        return 4;
-      default:
-        return 99;
-    }
-  }
-
-  int _groupScore(List<Map<String, dynamic>> group) {
-    return group.fold<int>(
-      0,
-      (sum, tile) => sum + ((tile['numeric_value'] ?? 0) as int),
-    );
-  }
-
-  List<Map<String, dynamic>> _sortedLeftovers(List<Map<String, dynamic>> leftovers) {
-    final copy = leftovers.map((e) => Map<String, dynamic>.from(e)).toList();
-    copy.sort((a, b) {
-      final colorCompare = _colorOrder(a['color'].toString()).compareTo(_colorOrder(b['color'].toString()));
-      if (colorCompare != 0) return colorCompare;
-      return (a['numeric_value'] as int).compareTo(b['numeric_value'] as int);
-    });
-    return copy;
-  }
-
-  List<List<Map<String, dynamic>>> _findRunCandidates(List<Map<String, dynamic>> tiles) {
-    final groupedByColor = <String, List<Map<String, dynamic>>>{};
-
-    for (final tile in tiles) {
-      if (tile['joker'] == true || tile['fake_okey'] == true) continue;
-      final color = tile['color'].toString();
-      groupedByColor.putIfAbsent(color, () => []);
-      groupedByColor[color]!.add(Map<String, dynamic>.from(tile));
-    }
-
-    final runs = <List<Map<String, dynamic>>>[];
-
-    groupedByColor.forEach((color, list) {
-      list.sort((a, b) => (a['numeric_value'] as int).compareTo(b['numeric_value'] as int));
-
-      List<Map<String, dynamic>> current = [];
-
-      for (int i = 0; i < list.length; i++) {
-        final tile = list[i];
-
-        if (current.isEmpty) {
-          current.add(tile);
-          continue;
-        }
-
-        final lastValue = current.last['numeric_value'] as int;
-        final thisValue = tile['numeric_value'] as int;
-
-        if (thisValue == lastValue + 1) {
-          current.add(tile);
-        } else if (thisValue == lastValue) {
-          continue;
-        } else {
-          if (current.length >= 3) {
-            runs.add(List<Map<String, dynamic>>.from(current));
-          }
-          current = [tile];
-        }
-      }
-
-      if (current.length >= 3) {
-        runs.add(List<Map<String, dynamic>>.from(current));
-      }
-    });
-
-    return runs;
-  }
-
-  List<List<Map<String, dynamic>>> _findSetCandidates(List<Map<String, dynamic>> tiles) {
-    final byValue = <int, List<Map<String, dynamic>>>{};
-
-    for (final tile in tiles) {
-      if (tile['joker'] == true || tile['fake_okey'] == true) continue;
-      final value = (tile['numeric_value'] ?? 0) as int;
-      byValue.putIfAbsent(value, () => []);
-      byValue[value]!.add(Map<String, dynamic>.from(tile));
-    }
-
-    final sets = <List<Map<String, dynamic>>>[];
-
-    byValue.forEach((value, list) {
-      final byColor = <String, Map<String, dynamic>>{};
-      for (final tile in list) {
-        final color = tile['color'].toString();
-        byColor.putIfAbsent(color, () => tile);
-      }
-
-      final unique = byColor.values.toList()
-        ..sort((a, b) => _colorOrder(a['color'].toString()).compareTo(_colorOrder(b['color'].toString())));
-
-      if (unique.length >= 3) {
-        sets.add(unique.take(4).map((e) => Map<String, dynamic>.from(e)).toList());
-      }
-    });
-
-    return sets;
-  }
-
-  bool _hasConflict(List<Map<String, dynamic>> group, Set<String> usedIds) {
-    for (final tile in group) {
-      final id = tile['id']?.toString() ?? '';
-      if (id.isNotEmpty && usedIds.contains(id)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  Map<String, dynamic> _buildBestGrouping(List<Map<String, dynamic>> sourceTiles) {
-    final tiles = sourceTiles
-        .where((t) => t['gap'] != true)
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-
-    final specialTiles = tiles.where((t) => t['joker'] == true || t['fake_okey'] == true).toList();
-    final normals = tiles.where((t) => t['joker'] != true && t['fake_okey'] != true).toList();
-
-    final runs = _findRunCandidates(normals);
-    final sets = _findSetCandidates(normals);
-
-    final candidates = <Map<String, dynamic>>[];
-
-    for (final run in runs) {
-      candidates.add({
-        'tiles': run,
-        'length': run.length,
-        'score': _groupScore(run),
+  Future<void> _loadGame() async {
+    if (widget.resolvedGameId.isEmpty) {
+      setState(() {
+        _loading = false;
+        _error = 'Oyun kimliği bulunamadı.';
       });
+      return;
     }
-
-    for (final set in sets) {
-      candidates.add({
-        'tiles': set,
-        'length': set.length,
-        'score': _groupScore(set),
-      });
-    }
-
-    candidates.sort((a, b) {
-      final lenCompare = (b['length'] as int).compareTo(a['length'] as int);
-      if (lenCompare != 0) return lenCompare;
-      return (b['score'] as int).compareTo(a['score'] as int);
-    });
-
-    final usedIds = <String>{};
-    final chosen = <List<Map<String, dynamic>>>[];
-
-    for (final candidate in candidates) {
-      final group = (candidate['tiles'] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
-
-      if (_hasConflict(group, usedIds)) continue;
-
-      chosen.add(group);
-      for (final tile in group) {
-        final id = tile['id']?.toString() ?? '';
-        if (id.isNotEmpty) usedIds.add(id);
-      }
-    }
-
-    final leftovers = <Map<String, dynamic>>[];
-    for (final tile in normals) {
-      final id = tile['id']?.toString() ?? '';
-      if (!usedIds.contains(id)) {
-        leftovers.add(Map<String, dynamic>.from(tile));
-      }
-    }
-
-    final arranged = <Map<String, dynamic>>[];
-    for (int i = 0; i < chosen.length; i++) {
-      arranged.addAll(chosen[i]);
-      if (i != chosen.length - 1) {
-        arranged.add({'gap': true});
-      }
-    }
-
-    if (chosen.isNotEmpty && (specialTiles.isNotEmpty || leftovers.isNotEmpty)) {
-      arranged.add({'gap': true});
-    }
-
-    arranged.addAll(specialTiles.map((e) => Map<String, dynamic>.from(e)));
-    arranged.addAll(_sortedLeftovers(leftovers));
-
-    final total = chosen.fold<int>(
-      0,
-      (sum, group) => sum + _groupScore(group),
-    );
-
-    return {
-      'arranged': arranged.isEmpty ? tiles : arranged,
-      'total': total,
-    };
-  }
-
-  void _applySeriesArrange(List<Map<String, dynamic>> sourceTiles) {
-    final result = _buildBestGrouping(sourceTiles);
 
     setState(() {
-      _arrangeMode = 'series';
-      _groupedTotal = result['total'] as int;
-      _overrideHandForPreview = (result['arranged'] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final raw = await _api.getGame(widget.resolvedGameId);
+      final parsed = GameStateMapper.fromDynamic(
+        raw,
+        fallbackGameId: widget.resolvedGameId,
+        fallbackViewerUserId: widget.resolvedViewerUserId,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _state = parsed;
+        _rackTiles = List<RackTileVm>.from(parsed.viewerHand);
+        _gapAfterIndexes = <int>{};
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  void _moveTile(int fromIndex, int toIndex) {
+    if (fromIndex == toIndex || fromIndex < 0 || fromIndex >= _rackTiles.length) {
+      return;
+    }
+
+    final updated = List<RackTileVm>.from(_rackTiles);
+    final moved = updated.removeAt(fromIndex);
+
+    var target = toIndex;
+    if (toIndex > fromIndex) {
+      target -= 1;
+    }
+
+    if (target < 0) {
+      target = 0;
+    }
+    if (target > updated.length) {
+      target = updated.length;
+    }
+
+    updated.insert(target, moved);
+
+    setState(() {
+      _rackTiles = updated;
+      _gapAfterIndexes = <int>{};
     });
   }
 
-  void _applyPairArrange(List<Map<String, dynamic>> sourceTiles) {
-    final tiles = sourceTiles
-        .where((t) => t['gap'] != true)
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
+  void _seriesArrange() {
+    final arranged = RackArranger.arrangeSeries(_rackTiles);
+    setState(() {
+      _rackTiles = arranged.tiles;
+      _gapAfterIndexes = arranged.gapAfterIndexes;
+    });
+  }
 
-    final normalTiles = tiles.where((t) => t['joker'] != true && t['fake_okey'] != true).toList();
-    final specialTiles = tiles.where((t) => t['joker'] == true || t['fake_okey'] == true).toList();
+  void _pairsArrange() {
+    final arranged = RackArranger.arrangePairs(_rackTiles);
+    setState(() {
+      _rackTiles = arranged.tiles;
+      _gapAfterIndexes = arranged.gapAfterIndexes;
+    });
+  }
 
-    final map = <String, List<Map<String, dynamic>>>{};
-    for (final tile in normalTiles) {
-      final key = '${tile['color']}-${tile['numeric_value']}';
-      map.putIfAbsent(key, () => []);
-      map[key]!.add(tile);
+  void _discardFromRack(int fromIndex) {
+    if (fromIndex < 0 || fromIndex >= _rackTiles.length) {
+      return;
     }
 
-    final pairGroups = <List<Map<String, dynamic>>>[];
-    final leftovers = <Map<String, dynamic>>[];
-
-    final keys = map.keys.toList()
-      ..sort((a, b) {
-        final aa = map[a]!.first;
-        final bb = map[b]!.first;
-        final lenCompare = map[b]!.length.compareTo(map[a]!.length);
-        if (lenCompare != 0) return lenCompare;
-        final colorCompare = _colorOrder(aa['color'].toString()).compareTo(_colorOrder(bb['color'].toString()));
-        if (colorCompare != 0) return colorCompare;
-        return (aa['numeric_value'] as int).compareTo(bb['numeric_value'] as int);
-      });
-
-    for (final key in keys) {
-      final list = map[key]!;
-      if (list.length >= 2) {
-        pairGroups.add(list.map((e) => Map<String, dynamic>.from(e)).toList());
-      } else {
-        leftovers.addAll(list.map((e) => Map<String, dynamic>.from(e)));
-      }
-    }
-
-    final arranged = <Map<String, dynamic>>[];
-    for (int i = 0; i < pairGroups.length; i++) {
-      arranged.addAll(pairGroups[i]);
-      if (i != pairGroups.length - 1) {
-        arranged.add({'gap': true});
-      }
-    }
-
-    if (pairGroups.isNotEmpty && (specialTiles.isNotEmpty || leftovers.isNotEmpty)) {
-      arranged.add({'gap': true});
-    }
-
-    arranged.addAll(specialTiles.map((e) => Map<String, dynamic>.from(e)));
-    arranged.addAll(_sortedLeftovers(leftovers));
+    final updated = List<RackTileVm>.from(_rackTiles)..removeAt(fromIndex);
 
     setState(() {
-      _arrangeMode = 'pairs';
-      _groupedTotal = 0;
-      _overrideHandForPreview = arranged.isEmpty ? tiles : arranged;
+      _rackTiles = updated;
+      _gapAfterIndexes = <int>{};
     });
+  }
+
+  List<ParsedSeatVm> get _orderedSeats {
+    final state = _state;
+    if (state == null || state.seats.isEmpty) {
+      return <ParsedSeatVm>[];
+    }
+
+    final myIndex = state.seats.indexWhere((e) => e.id == state.viewerSeatId);
+    if (myIndex == -1) {
+      return state.seats;
+    }
+
+    return <ParsedSeatVm>[
+      ...state.seats.sublist(myIndex),
+      ...state.seats.sublist(0, myIndex),
+    ];
+  }
+
+  ParsedSeatVm? _seatAtOffset(int offset) {
+    final seats = _orderedSeats;
+    if (seats.length <= offset) {
+      return null;
+    }
+    return seats[offset];
   }
 
   @override
   Widget build(BuildContext context) {
+    final title = widget.resolvedTableName.isNotEmpty
+        ? widget.resolvedTableName
+        : 'X 101 Salonu';
+
     return Scaffold(
+      backgroundColor: const Color(0xFF0B5A43),
       appBar: AppBar(
-        title: Text('${widget.tableName} - Oyun'),
-        actions: [
+        backgroundColor: const Color(0xFF0B5A43),
+        elevation: 0,
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w900),
+        ),
+        actions: <Widget>[
           IconButton(
-            onPressed: _refresh,
+            onPressed: _loading ? null : _loadGame,
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Colors.green.shade100,
-              Colors.green.shade50,
-            ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: FutureBuilder<Map<String, dynamic>>(
-          future: _gameFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
+      body: SafeArea(
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? _ErrorView(error: _error!, onRetry: _loadGame)
+                : _buildStage(),
+      ),
+    );
+  }
 
-            if (snapshot.hasError) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(snapshot.error.toString()),
-                ),
-              );
-            }
+  Widget _buildStage() {
+    final state = _state;
+    if (state == null) {
+      return _ErrorView(
+        error: 'Oyun verisi boş geldi.',
+        onRetry: _loadGame,
+      );
+    }
 
-            final data = snapshot.data!;
-            final seats = (data['seats'] as List?) ?? const [];
-            final viewerSeatNo = (data['viewer_seat_no'] ?? 0) as int;
-            final backendViewerHand = _toTileMaps((data['viewer_hand'] as List?) ?? const []);
-            final viewerHand = _overrideHandForPreview ?? backendViewerHand;
-            final centerMelds = _toMeldMaps((data['center_melds'] as List?) ?? const []);
-            final discardPile = _toTileMaps((data['discard_pile'] as List?) ?? const []);
-            final indicator = Map<String, dynamic>.from((data['indicator_tile'] as Map?) ?? const {});
-            final okey = Map<String, dynamic>.from((data['okey_tile'] as Map?) ?? const {});
-            final drawPileCount = (data['draw_pile_count'] ?? 0).toString();
-            final currentTurnSeat = (data['current_turn_seat'] ?? 0) as int;
-            final viewerLastDrawnTileID = (data['viewer_last_drawn_tile_id'] ?? '').toString();
+    final topSeat = _seatAtOffset(2);
+    final leftSeat = _seatAtOffset(3);
+    final rightSeat = _seatAtOffset(1);
+    final mySeat = _seatAtOffset(0);
 
-            final topSeatNo = viewerSeatNo == 3 ? 1 : (viewerSeatNo == 1 ? 3 : 1);
-            final leftSeatNo = viewerSeatNo == 1 ? 4 : (viewerSeatNo == 2 ? 1 : (viewerSeatNo == 3 ? 2 : 3));
-            final rightSeatNo = viewerSeatNo == 1 ? 2 : (viewerSeatNo == 2 ? 3 : (viewerSeatNo == 3 ? 4 : 1));
-            final bottomSeatNo = viewerSeatNo == 0 ? 3 : viewerSeatNo;
-
-            final topSeat = _seat(seats, topSeatNo);
-            final leftSeat = _seat(seats, leftSeatNo);
-            final rightSeat = _seat(seats, rightSeatNo);
-            final bottomSeat = _seat(seats, bottomSeatNo);
-
-            final isMyTurn = currentTurnSeat == bottomSeatNo;
-            final canDraw = isMyTurn && backendViewerHand.length == 21;
-            final canDiscard = isMyTurn && backendViewerHand.length == 22 && _selectedTileId != null;
-            final canOpen = isMyTurn && !_busy;
-
-            final lastDiscard = discardPile.isEmpty ? null : discardPile.last;
-
-            return SafeArea(
-              child: Center(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1280),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            PlayerRackWidget(
-                              title: _seatTitle(topSeat, false),
-                              isActive: false,
-                              isBottomPlayer: false,
-                              tiles: _hiddenTiles((topSeat?['hand_count'] ?? 0) as int),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 18),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Expanded(
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: PlayerRackWidget(
-                                  title: _seatTitle(leftSeat, false),
-                                  isActive: false,
-                                  isBottomPlayer: false,
-                                  tiles: _hiddenTiles((leftSeat?['hand_count'] ?? 0) as int),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 20),
-                            Expanded(
-                              flex: 3,
-                              child: Column(
-                                children: [
-                                  MeldAreaWidget(groups: centerMelds),
-                                  const SizedBox(height: 14),
-                                  Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(color: Colors.grey.shade300),
-                                    ),
-                                    child: Wrap(
-                                      spacing: 18,
-                                      runSpacing: 10,
-                                      alignment: WrapAlignment.center,
-                                      children: [
-                                        Text(
-                                          'Masa ID: ${widget.tableId}',
-                                          style: const TextStyle(fontWeight: FontWeight.bold),
-                                        ),
-                                        Text('Game ID: ${widget.gameId}'),
-                                        Text('Sira: Koltuk $currentTurnSeat'),
-                                        Text('Cekilecek tas: $drawPileCount'),
-                                        Text('Gosterge: ${indicator['color'] ?? ''} ${indicator['value'] ?? ''}'),
-                                        Text('Okey: ${okey['color'] ?? ''} ${okey['value'] ?? ''}'),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  DragTarget<String>(
-                                    onWillAcceptWithDetails: (_) => canDiscard,
-                                    onAcceptWithDetails: (details) async {
-                                      await _discardTileById(details.data);
-                                    },
-                                    builder: (context, candidateData, rejectedData) {
-                                      final active = candidateData.isNotEmpty;
-                                      return Container(
-                                        width: double.infinity,
-                                        padding: const EdgeInsets.all(14),
-                                        decoration: BoxDecoration(
-                                          color: active ? Colors.red.shade50 : Colors.white,
-                                          borderRadius: BorderRadius.circular(16),
-                                          border: Border.all(
-                                            color: active ? Colors.red.shade400 : Colors.grey.shade300,
-                                            width: active ? 2 : 1,
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withOpacity(0.04),
-                                              blurRadius: 8,
-                                              offset: const Offset(0, 2),
-                                            ),
-                                          ],
-                                        ),
-                                        child: Column(
-                                          children: [
-                                            const Text(
-                                              'Tas Atma Alani',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 15,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Text(
-                                              lastDiscard == null
-                                                  ? 'Henüz atılan taş yok'
-                                                  : 'Son tas: ${lastDiscard['color']} ${lastDiscard['value']}',
-                                              textAlign: TextAlign.center,
-                                              style: const TextStyle(fontSize: 14),
-                                            ),
-                                            const SizedBox(height: 6),
-                                            Text(
-                                              active
-                                                  ? 'Buraya birakirsan tas atilir'
-                                                  : 'Tasi surukleyip buraya birak',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey.shade700,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  const SizedBox(height: 12),
-                                  if (_arrangeMode == 'series')
-                                    Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green.shade50,
-                                        borderRadius: BorderRadius.circular(14),
-                                        border: Border.all(color: Colors.green.shade200),
-                                      ),
-                                      child: Text(
-                                        'Toplam: $_groupedTotal',
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 20),
-                            Expanded(
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: PlayerRackWidget(
-                                  title: _seatTitle(rightSeat, false),
-                                  isActive: false,
-                                  isBottomPlayer: false,
-                                  tiles: _hiddenTiles((rightSeat?['hand_count'] ?? 0) as int),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 18),
-                        PlayerRackWidget(
-                          title: _seatTitle(bottomSeat, true),
-                          isActive: isMyTurn,
-                          isBottomPlayer: true,
-                          tiles: viewerHand,
-                          selectedTileId: _selectedTileId,
-                          highlightedTileId: viewerLastDrawnTileID.isEmpty ? null : viewerLastDrawnTileID,
-                          onTileTap: (tileId) {
-                            setState(() {
-                              _selectedTileId = _selectedTileId == tileId ? null : tileId;
-                            });
-                          },
-                        ),
-                        const SizedBox(height: 16),
-                        if (_busy)
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 12),
-                            child: LinearProgressIndicator(),
-                          ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: isMyTurn ? Colors.green.shade100 : Colors.orange.shade50,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: isMyTurn ? Colors.green.shade400 : Colors.orange.shade300,
-                            ),
-                          ),
-                          child: Text(
-                            isMyTurn
-                                ? (backendViewerHand.length == 21
-                                    ? 'Sira sende: once yerden tas cek'
-                                    : 'Sira sende: bir tas sec ve at')
-                                : 'Sira rakipte / botta',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          alignment: WrapAlignment.center,
-                          children: [
-                            ElevatedButton.icon(
-                              onPressed: canDraw && !_busy ? _drawTile : null,
-                              icon: const Icon(Icons.download),
-                              label: const Text('Yerden Cek'),
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: canOpen ? _openHand : null,
-                              icon: const Icon(Icons.play_arrow),
-                              label: const Text('El Ac'),
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: !_busy ? () => _applySeriesArrange(backendViewerHand) : null,
-                              icon: const Icon(Icons.linear_scale),
-                              label: const Text('Seri Diz'),
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: !_busy ? () => _applyPairArrange(backendViewerHand) : null,
-                              icon: const Icon(Icons.view_week),
-                              label: const Text('Cift Diz'),
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: canDiscard && !_busy ? _discardSelected : null,
-                              icon: const Icon(Icons.send),
-                              label: const Text('Secili Tasi At'),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: !_busy ? _runBotTurns : null,
-                              icon: const Icon(Icons.smart_toy),
-                              label: const Text('Botlar Oynasin'),
-                            ),
-                          ],
-                        ),
-                      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Center(
+          child: FittedBox(
+            fit: BoxFit.contain,
+            alignment: Alignment.center,
+            child: SizedBox(
+              width: 1600,
+              height: 900,
+              child: Stack(
+                children: <Widget>[
+                  Positioned(
+                    left: 350,
+                    top: 80,
+                    child: _MainSquareArea(
+                      indicatorTile: state.indicatorTile,
+                      drawPileCount: state.drawPileCount,
                     ),
                   ),
+
+                  if (topSeat != null)
+                    Positioned(
+                      left: 640,
+                      top: 12,
+                      child: _SeatBadgeOnly(
+                        seat: topSeat,
+                        isActive: state.currentTurnSeatId == topSeat.id,
+                      ),
+                    ),
+
+                  if (leftSeat != null)
+                    Positioned(
+                      left: 42,
+                      top: 262,
+                      child: _SeatBadgeOnly(
+                        seat: leftSeat,
+                        isActive: state.currentTurnSeatId == leftSeat.id,
+                      ),
+                    ),
+
+                  if (rightSeat != null)
+                    Positioned(
+                      right: 42,
+                      top: 262,
+                      child: _SeatBadgeOnly(
+                        seat: rightSeat,
+                        isActive: state.currentTurnSeatId == rightSeat.id,
+                      ),
+                    ),
+
+                  Positioned(
+                    left: 1220,
+                    top: 118,
+                    child: _DiscardSlot(
+                      tiles: topSeat?.discards ?? const <RackTileVm>[],
+                    ),
+                  ),
+
+                  Positioned(
+                    left: 215,
+                    top: 330,
+                    child: _DiscardSlot(
+                      tiles: leftSeat?.discards ?? const <RackTileVm>[],
+                    ),
+                  ),
+
+                  Positioned(
+                    right: 215,
+                    top: 330,
+                    child: _DiscardSlot(
+                      tiles: rightSeat?.discards ?? const <RackTileVm>[],
+                    ),
+                  ),
+
+                  Positioned(
+                    right: 122,
+                    bottom: 120,
+                    child: _DiscardSlot(
+                      tiles: mySeat?.discards ?? const <RackTileVm>[],
+                      onAcceptTile: _discardFromRack,
+                    ),
+                  ),
+
+                  Positioned(
+                    left: 70,
+                    bottom: 30,
+                    child: _BottomPlayerArea(
+                      playerName: mySeat?.displayName ?? 'Sen',
+                      currentTurn: state.currentTurnSeatId == mySeat?.id,
+                      rackTiles: _rackTiles,
+                      gapAfterIndexes: _gapAfterIndexes,
+                      onMoveTile: _moveTile,
+                      onSeriesArrange: _seriesArrange,
+                      onPairsArrange: _pairsArrange,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MainSquareArea extends StatelessWidget {
+  const _MainSquareArea({
+    required this.indicatorTile,
+    required this.drawPileCount,
+  });
+
+  final RackTileVm? indicatorTile;
+  final int drawPileCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 900,
+      height: 500,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0x14000000),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Stack(
+        children: <Widget>[
+          const Positioned.fill(
+            child: Align(
+              alignment: Alignment.center,
+              child: Text(
+                'X 101 Salonu',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 34,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.7,
                 ),
               ),
-            );
-          },
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 112,
+            child: Center(
+              child: DrawPileWidget(
+                indicatorTile: indicatorTile,
+                drawCount: drawPileCount,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeatBadgeOnly extends StatelessWidget {
+  const _SeatBadgeOnly({
+    required this.seat,
+    required this.isActive,
+  });
+
+  final ParsedSeatVm seat;
+  final bool isActive;
+
+  @override
+  Widget build(BuildContext context) {
+    return OpponentBadgeWidget(
+      displayName: seat.displayName,
+      username: seat.username,
+      chips: seat.chips,
+      modeText: 'Standart',
+      isActiveTurn: isActive,
+      avatarType: seat.avatarType,
+    );
+  }
+}
+
+class _DiscardSlot extends StatelessWidget {
+  const _DiscardSlot({
+    required this.tiles,
+    this.onAcceptTile,
+  });
+
+  final List<RackTileVm> tiles;
+  final void Function(int fromIndex)? onAcceptTile;
+
+  @override
+  Widget build(BuildContext context) {
+    return DiscardDropZoneWidget(
+      tiles: tiles,
+      width: 78,
+      height: 100,
+      onAcceptTile: onAcceptTile,
+      showFrame: true,
+    );
+  }
+}
+
+class _BottomPlayerArea extends StatelessWidget {
+  const _BottomPlayerArea({
+    required this.playerName,
+    required this.currentTurn,
+    required this.rackTiles,
+    required this.gapAfterIndexes,
+    required this.onMoveTile,
+    required this.onSeriesArrange,
+    required this.onPairsArrange,
+  });
+
+  final String playerName;
+  final bool currentTurn;
+  final List<RackTileVm> rackTiles;
+  final Set<int> gapAfterIndexes;
+  final void Function(int fromIndex, int toIndex) onMoveTile;
+  final VoidCallback onSeriesArrange;
+  final VoidCallback onPairsArrange;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 1420,
+      height: 245,
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: const Color(0x14000000),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0x22FFFFFF)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Text(
+                        playerName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (currentTurn) ...<Widget>[
+                        const SizedBox(width: 8),
+                        const Icon(
+                          Icons.radio_button_checked,
+                          color: Color(0xFFFFC107),
+                          size: 16,
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: PlayerRackWidget(
+                      tiles: rackTiles,
+                      gapAfterIndexes: gapAfterIndexes,
+                      onMoveTile: onMoveTile,
+                      rackHeight: 168,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          SizedBox(
+            width: 104,
+            child: Column(
+              children: <Widget>[
+                _SideActionButton(
+                  title: 'Seri Diz',
+                  onTap: onSeriesArrange,
+                ),
+                const SizedBox(height: 12),
+                _SideActionButton(
+                  title: 'Çift Diz',
+                  onTap: onPairsArrange,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SideActionButton extends StatelessWidget {
+  const _SideActionButton({
+    required this.title,
+    required this.onTap,
+  });
+
+  final String title;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 104,
+      height: 96,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFFD8A94C),
+          foregroundColor: Colors.white,
+          elevation: 2,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        child: Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            height: 1.1,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorView extends StatelessWidget {
+  const _ErrorView({
+    required this.error,
+    required this.onRetry,
+  });
+
+  final String error;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.error_outline, size: 42, color: Colors.white),
+            const SizedBox(height: 12),
+            Text(
+              error,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 14),
+            FilledButton(
+              onPressed: onRetry,
+              child: const Text('Tekrar Dene'),
+            ),
+          ],
         ),
       ),
     );

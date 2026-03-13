@@ -1,66 +1,94 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import 'package:client_flutter/features/game/domain/rack_arranger.dart';
 
 class GameTileWidget extends StatelessWidget {
-  final String value;
-  final Color color;
-  final bool isJoker;
-  final bool isFakeOkey;
-  final double width;
-  final double height;
-
   const GameTileWidget({
     super.key,
-    required this.value,
-    required this.color,
-    this.isJoker = false,
-    this.isFakeOkey = false,
-    this.width = 34,
-    this.height = 50,
+    required this.tile,
+    this.width = 50,
+    this.height = 72,
+    this.highlight = false,
+    this.compact = false,
   });
+
+  final RackTileVm tile;
+  final double width;
+  final double height;
+  final bool highlight;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final borderColor = isFakeOkey
-        ? Colors.deepPurple
-        : isJoker
-            ? Colors.purple.shade300
-            : Colors.black12;
+    final dotColor = _dotColor(tile.color);
 
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
       width: width,
       height: height,
-      margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       decoration: BoxDecoration(
-        color: isFakeOkey ? Colors.purple.shade50 : Colors.white,
-        borderRadius: BorderRadius.circular(8),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(compact ? 10 : 12),
         border: Border.all(
-          color: borderColor,
-          width: (isJoker || isFakeOkey) ? 2 : 1,
+          color: highlight ? const Color(0xFFFFC107) : const Color(0xFFDDDDDD),
+          width: highlight ? 2.2 : 1.2,
         ),
-        boxShadow: [
+        boxShadow: const [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            color: Color(0x22000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
           ),
         ],
       ),
-      child: Center(
-        child: isFakeOkey
-            ? Icon(
-                Icons.auto_awesome,
-                color: Colors.deepPurple.shade400,
-                size: 20,
-              )
-            : Text(
-                value,
+      child: tile.isJoker
+          ? Center(
+              child: Text(
+                'J',
                 style: TextStyle(
-                  color: color,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
+                  fontSize: compact ? 18 : 22,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF111111),
                 ),
               ),
-      ),
+            )
+          : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '${tile.number}',
+                  style: TextStyle(
+                    fontSize: compact ? 18 : 24,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF111111),
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  width: compact ? 11 : 14,
+                  height: compact ? 11 : 14,
+                  decoration: BoxDecoration(
+                    color: dotColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ],
+            ),
     );
+  }
+
+  Color _dotColor(RackTileColor color) {
+    switch (color) {
+      case RackTileColor.red:
+        return const Color(0xFFE53935);
+      case RackTileColor.blue:
+        return const Color(0xFF1E88E5);
+      case RackTileColor.yellow:
+        return const Color(0xFFFBC02D);
+      case RackTileColor.black:
+        return const Color(0xFF212121);
+      case RackTileColor.unknown:
+        return const Color(0xFF9E9E9E);
+    }
   }
 }

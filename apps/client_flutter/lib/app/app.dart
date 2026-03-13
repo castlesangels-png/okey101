@@ -49,15 +49,13 @@ class _AppRootState extends State<AppRoot> {
       );
     }
 
-    final displayName =
-        (_currentUser!['display_name'] ??
-                _currentUser!['displayName'] ??
-                _currentUser!['username'] ??
-                'Oyuncu')
-            .toString();
+    final displayName = (_currentUser!['display_name'] ??
+            _currentUser!['displayName'] ??
+            _currentUser!['username'] ??
+            'Oyuncu')
+        .toString();
 
-    final userId =
-        int.tryParse(
+    final userId = int.tryParse(
           (_currentUser!['id'] ?? _currentUser!['user_id'] ?? '0').toString(),
         ) ??
         0;
@@ -65,7 +63,6 @@ class _AppRootState extends State<AppRoot> {
     return LobbyPage(
       displayName: displayName,
       userId: userId,
-      onLogout: _handleLogout,
     );
   }
 }

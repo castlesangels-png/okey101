@@ -1,0 +1,155 @@
+import 'package:flutter/material.dart';
+import 'game_tile_widget.dart';
+
+class ReorderableRackWidget extends StatelessWidget {
+  final List<Map<String, dynamic>> tiles;
+  final List<int> groupBreaks;
+  final String? selectedTileId;
+  final String? highlightedTileId;
+  final ValueChanged<String> onTileTap;
+  final void Function(int oldIndex, int newIndex) onMoveTileToIndex;
+
+  const ReorderableRackWidget({
+    super.key,
+    required this.tiles,
+    required this.groupBreaks,
+    required this.selectedTileId,
+    required this.highlightedTileId,
+    required this.onTileTap,
+    required this.onMoveTileToIndex,
+  });
+
+  Color _parseColor(String raw) {
+    switch (raw) {
+      case 'red':
+        return Colors.red.shade700;
+      case 'blue':
+        return Colors.blue.shade700;
+      case 'black':
+        return Colors.black87;
+      case 'yellow':
+        return Colors.amber.shade800;
+      default:
+        return Colors.black87;
+    }
+  }
+
+  Widget _slot(int insertIndex) {
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) {
+        onMoveTileToIndex(details.data, insertIndex);
+      },
+      builder: (context, candidateData, rejectedData) {
+        final active = candidateData.isNotEmpty;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: active ? 18 : 8,
+          height: 64,
+          margin: EdgeInsets.symmetric(horizontal: active ? 4 : 1),
+          decoration: BoxDecoration(
+            color: active ? Colors.green.withOpacity(0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: active ? Border.all(color: Colors.green.shade700, width: 2) : null,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _tileWidget(Map<String, dynamic> tile, int globalIndex) {
+    final tileId = (tile['id'] ?? '').toString();
+    final selected = selectedTileId == tileId;
+    final highlighted = highlightedTileId == tileId;
+
+    final child = AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      transform: Matrix4.translationValues(0, selected ? -10 : 0, 0),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: selected
+            ? Border.all(color: Colors.green.shade800, width: 2)
+            : highlighted
+                ? Border.all(color: Colors.orange.shade600, width: 2)
+                : null,
+      ),
+      child: GameTileWidget(
+        value: tile['value'].toString(),
+        color: _parseColor(tile['color'].toString()),
+        isJoker: tile['joker'] == true,
+        isFakeOkey: tile['fake_okey'] == true,
+        width: 42,
+        height: 62,
+      ),
+    );
+
+    return LongPressDraggable<int>(
+      data: globalIndex,
+      feedback: Material(
+        color: Colors.transparent,
+        child: child,
+      ),
+      childWhenDragging: Opacity(
+        opacity: 0.35,
+        child: child,
+      ),
+      child: GestureDetector(
+        onTap: () => onTileTap(tileId),
+        child: child,
+      ),
+    );
+  }
+
+  List<Widget> _buildRow(List<Map<String, dynamic>> rowTiles, int startIndex) {
+    final widgets = <Widget>[];
+
+    widgets.add(_slot(startIndex));
+
+    for (int i = 0; i < rowTiles.length; i++) {
+      final globalIndex = startIndex + i;
+      widgets.add(_tileWidget(rowTiles[i], globalIndex));
+
+      final nextIndex = globalIndex + 1;
+      final hasBreak = groupBreaks.contains(nextIndex);
+      if (hasBreak) {
+        widgets.add(const SizedBox(width: 22));
+      }
+
+      widgets.add(_slot(nextIndex));
+    }
+
+    return widgets;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final safeTiles = tiles.map((e) => Map<String, dynamic>.from(e)).toList();
+    final firstRowCount = safeTiles.length <= 11 ? safeTiles.length : (safeTiles.length / 2).ceil();
+
+    final row1 = safeTiles.take(firstRowCount).toList();
+    final row2 = safeTiles.skip(firstRowCount).toList();
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: _buildRow(row1, 0),
+          ),
+        ),
+        if (row2.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: _buildRow(row2, firstRowCount),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}

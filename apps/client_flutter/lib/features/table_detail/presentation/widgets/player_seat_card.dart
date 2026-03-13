@@ -23,20 +23,17 @@ class PlayerSeatCard extends StatelessWidget {
     final borderColor = isYou
         ? Colors.green.shade700
         : isOccupied
-            ? Colors.green.shade300
-            : Colors.grey.shade300;
+        ? Colors.green.shade300
+        : Colors.grey.shade300;
 
     final bgColor = isYou
         ? Colors.green.shade50
         : isOccupied
-            ? Colors.white
-            : Colors.grey.shade100;
+        ? Colors.white
+        : Colors.grey.shade100;
 
     return Container(
-      constraints: const BoxConstraints(
-        minWidth: 180,
-        maxWidth: 220,
-      ),
+      constraints: const BoxConstraints(minWidth: 180, maxWidth: 220),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: bgColor,
@@ -44,7 +41,7 @@ class PlayerSeatCard extends StatelessWidget {
         border: Border.all(color: borderColor, width: isYou ? 2 : 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -95,10 +92,7 @@ class PlayerSeatCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          _RackPlaceholder(
-            direction: rackDirection,
-            active: isOccupied,
-          ),
+          _RackPlaceholder(direction: rackDirection, active: isOccupied),
           if (isYou) ...[
             const SizedBox(height: 8),
             Container(
@@ -127,10 +121,7 @@ class _RackPlaceholder extends StatelessWidget {
   final Axis direction;
   final bool active;
 
-  const _RackPlaceholder({
-    required this.direction,
-    required this.active,
-  });
+  const _RackPlaceholder({required this.direction, required this.active});
 
   @override
   Widget build(BuildContext context) {
